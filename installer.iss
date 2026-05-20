@@ -1,7 +1,7 @@
-#define AppName "YTB Downloader"
+#define AppName "Vex"
 #define AppVersion "1.0.1"
 #define AppPublisher "KDoizz"
-#define AppExeName "YTB Downloader.exe"
+#define AppExeName "Vex.exe"
 
 [Setup]
 AppId={{B7F3C2A1-4E8D-4F2B-9C6A-1D5E3F7B8A92}
@@ -10,7 +10,7 @@ AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
-OutputBaseFilename=YTB Downloader Setup
+OutputBaseFilename=Vex Setup
 OutputDir=Output
 Compression=lzma
 SolidCompression=yes
@@ -25,7 +25,7 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "dist\YTB Downloader\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\Vex\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"

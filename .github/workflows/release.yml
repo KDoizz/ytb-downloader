@@ -35,7 +35,7 @@ jobs:
             --noconfirm `
             --onedir `
             --windowed `
-            --name "YTB Downloader" `
+            --name "Vex" `
             "--add-data=$ctk;customtkinter" `
             "--add-data=bin\ffmpeg.exe;bin" `
             --collect-data yt_dlp `
@@ -55,5 +55,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Output/YTB Downloader Setup.exe
+          files: Output/Vex Setup.exe
           generate_release_notes: true

@@ -1,6 +1,6 @@
 @echo off
 echo ============================================
-echo  YTB Downloader - Build do executavel
+echo  Vex - Build do executavel
 echo ============================================
 echo.
 
@@ -33,17 +33,17 @@ python -m PyInstaller ^
   --noconfirm ^
   --onefile ^
   --windowed ^
-  --name "YTB Downloader" ^
+  --name "Vex" ^
   --add-data "%CTK_PATH%;customtkinter" ^
   --add-data "bin\ffmpeg.exe;bin" ^
   --collect-data yt_dlp ^
   app.py
 
 echo.
-if exist "dist\YTB Downloader.exe" (
+if exist "dist\Vex.exe" (
     echo ============================================
     echo  BUILD CONCLUIDO COM SUCESSO!
-    echo  Arquivo: dist\YTB Downloader.exe
+    echo  Arquivo: dist\Vex.exe
     echo.
     echo  Envie esse unico arquivo para seu amigo.
     echo  Ele so precisa abrir - sem instalar nada.
