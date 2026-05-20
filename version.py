@@ -1,2 +1,2 @@
 __version__ = "1.0.0"
-GITHUB_REPO = KDoizz/ytb-downloader"  # substitua pelo seu usuario/repositorio
+GITHUB_REPO = "KDoizz/ytb-downloader"
