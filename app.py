@@ -123,7 +123,7 @@ class YTBDownloader(ctk.CTk):
             height=28,
             fg_color="#4caf50",
             hover_color="#388e3c",
-            command=self._open_update_url,
+            command=self._start_update,
         ).pack(side="right", padx=(0, 8), pady=6)
 
         # URL row
@@ -239,9 +239,12 @@ class YTBDownloader(ctk.CTk):
             with urllib.request.urlopen(req, timeout=5) as r:
                 data = json.loads(r.read())
             latest = data["tag_name"].lstrip("v")
-            url = data["html_url"]
+            download_url = next(
+                (a["browser_download_url"] for a in data.get("assets", []) if a["name"].endswith("Setup.exe")),
+                None,
+            )
             if latest != __version__:
-                self.after(0, self._show_update_banner, latest, url)
+                self.after(0, self._show_update_banner, latest, download_url)
             elif manual:
                 self.after(0, self._set_status, "Você está na versão mais recente!", "green")
         except Exception:
@@ -249,15 +252,35 @@ class YTBDownloader(ctk.CTk):
                 self.after(0, self._set_status, "Não foi possível verificar atualizações", "orange")
         finally:
             if manual:
-                self.after(0, self._check_update_btn.configure, {"state": "normal", "text": "Verificar atualizações"})
+                self.after(0, lambda: self._check_update_btn.configure(state="normal", text="Verificar atualizações"))
 
-    def _show_update_banner(self, latest: str, url: str):
-        self._update_url = url
-        self._update_label.configure(text=f"Nova versao {latest} disponivel")
+    def _show_update_banner(self, latest: str, download_url: str | None):
+        self._download_url = download_url
+        self._update_label.configure(text=f"Nova versão {latest} disponível")
         self._update_banner.pack(fill="x", padx=20, pady=(0, 8))
 
-    def _open_update_url(self):
-        webbrowser.open(getattr(self, "_update_url", ""))
+    def _start_update(self):
+        if not getattr(self, "_download_url", None):
+            return
+        threading.Thread(target=self._download_and_install, daemon=True).start()
+
+    def _download_and_install(self):
+        import tempfile, subprocess
+        try:
+            tmp = tempfile.mktemp(suffix="_setup.exe")
+
+            def reporthook(count, block_size, total):
+                if total > 0:
+                    pct = min(count * block_size / total, 1.0)
+                    self.after(0, self.progress_bar.set, pct)
+                    self.after(0, self._set_status, f"Baixando atualização... {pct * 100:.0f}%")
+
+            urllib.request.urlretrieve(self._download_url, tmp, reporthook=reporthook)
+            self.after(0, self._set_status, "Instalando...")
+            subprocess.Popen([tmp, "/SILENT"])
+            self.after(800, self.quit)
+        except Exception:
+            self.after(0, self._set_status, "Erro ao baixar atualização", "red")
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
