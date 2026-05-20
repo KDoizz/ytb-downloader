@@ -9,5 +9,8 @@ Output/
 
 bin/
 
+CLAUDE.md
+.claude/
+
 .env
 *.log
