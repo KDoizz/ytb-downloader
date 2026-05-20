@@ -1,0 +1,45 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyinstaller imageio-ffmpeg customtkinter yt-dlp
+
+      - name: Copy ffmpeg
+        run: |
+          python -c "import imageio_ffmpeg, shutil, os; os.makedirs('bin', exist_ok=True); shutil.copy2(imageio_ffmpeg.get_ffmpeg_exe(), os.path.join('bin', 'ffmpeg.exe'))"
+
+      - name: Build exe
+        run: |
+          $ctk = python -c "import customtkinter, os; print(os.path.dirname(customtkinter.__file__))"
+          python -m PyInstaller `
+            --noconfirm `
+            --onefile `
+            --windowed `
+            --name "YTB Downloader" `
+            "--add-data=$ctk;customtkinter" `
+            "--add-data=bin\ffmpeg.exe;bin" `
+            --collect-data yt_dlp `
+            app.py
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/YTB Downloader.exe
+          generate_release_notes: true
