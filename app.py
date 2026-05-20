@@ -209,11 +209,30 @@ class YTBDownloader(ctk.CTk):
 
         # Status label
         self.status_label = ctk.CTkLabel(self, text="Pronto para baixar", text_color="gray")
-        self.status_label.pack(pady=8)
+        self.status_label.pack(pady=(8, 2))
+
+        # Check updates button
+        self._check_update_btn = ctk.CTkButton(
+            self,
+            text="Verificar atualizações",
+            width=180,
+            height=26,
+            fg_color="transparent",
+            border_width=1,
+            text_color="gray",
+            hover_color="#2a2a2a",
+            font=ctk.CTkFont(size=12),
+            command=self._check_update_manual,
+        )
+        self._check_update_btn.pack(pady=(0, 12))
 
     # ── update check ─────────────────────────────────────────────────────────
 
-    def _check_update_worker(self):
+    def _check_update_manual(self):
+        self._check_update_btn.configure(state="disabled", text="Verificando...")
+        threading.Thread(target=self._check_update_worker, args=(True,), daemon=True).start()
+
+    def _check_update_worker(self, manual: bool = False):
         try:
             api = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
             req = urllib.request.Request(api, headers={"User-Agent": "ytb-downloader"})
@@ -223,8 +242,14 @@ class YTBDownloader(ctk.CTk):
             url = data["html_url"]
             if latest != __version__:
                 self.after(0, self._show_update_banner, latest, url)
+            elif manual:
+                self.after(0, self._set_status, "Você está na versão mais recente!", "green")
         except Exception:
-            pass
+            if manual:
+                self.after(0, self._set_status, "Não foi possível verificar atualizações", "orange")
+        finally:
+            if manual:
+                self.after(0, self._check_update_btn.configure, {"state": "normal", "text": "Verificar atualizações"})
 
     def _show_update_banner(self, latest: str, url: str):
         self._update_url = url
