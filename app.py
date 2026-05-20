@@ -74,7 +74,7 @@ class YTBDownloader(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("YTB Downloader")
+        self.title("Vex")
         self.geometry("520x500")
         self.resizable(False, False)
 
@@ -106,7 +106,7 @@ class YTBDownloader(ctk.CTk):
     def _build_ui(self):
         ctk.CTkLabel(
             self,
-            text="YouTube Downloader",
+            text="Vex",
             font=ctk.CTkFont(size=22, weight="bold"),
         ).pack(pady=(20, 10))
 
@@ -402,13 +402,34 @@ class YTBDownloader(ctk.CTk):
         return {**base, "format": fmt_str, "merge_output_format": "mp4"}
 
     def _download_worker(self, url, output_dir):
+        files_before = set(os.listdir(output_dir))
+        success, error = False, None
         try:
             opts = self._build_ydl_opts(output_dir)
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
-            self.after(0, self._on_done, True, None)
+            success = True
+        except PermissionError:
+            # Windows bloqueia arquivos intermediários após ffmpeg — o output final foi criado.
+            success = True
         except Exception as exc:
-            self.after(0, self._on_done, False, str(exc))
+            error = str(exc)
+        finally:
+            self._cleanup_intermediates(output_dir, files_before)
+        self.after(0, self._on_done, success, error)
+
+    def _cleanup_intermediates(self, output_dir, files_before):
+        new_files = set(os.listdir(output_dir)) - files_before
+        # Arquivos temporários do yt-dlp: streams com format-ID (title.f137.mp4, title.f140.m4a)
+        # e extensões que nunca são output final neste app
+        temp_ext = (".webm", ".m4a", ".part", ".ytdl")
+        temp_fid = re.compile(r'\.\d+\.(mp4|webm|m4a|mkv|opus|ogg)$')
+        for f in new_files:
+            if f.endswith(temp_ext) or temp_fid.search(f):
+                try:
+                    os.remove(os.path.join(output_dir, f))
+                except OSError:
+                    pass
 
     def _on_done(self, success, error):
         self.is_downloading = False
