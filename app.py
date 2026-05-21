@@ -129,7 +129,7 @@ class YTBDownloader(ctk.CTk):
         # URL row
         url_frame = ctk.CTkFrame(self, fg_color="transparent")
         url_frame.pack(fill="x", padx=20, pady=5)
-        ctk.CTkLabel(url_frame, text="Link do vídeo:").pack(anchor="w")
+        ctk.CTkLabel(url_frame, text="Link do vídeo / mídia:").pack(anchor="w")
 
         row = ctk.CTkFrame(url_frame, fg_color="transparent")
         row.pack(fill="x")
@@ -137,7 +137,7 @@ class YTBDownloader(ctk.CTk):
 
         self.url_entry = ctk.CTkEntry(
             row,
-            placeholder_text="https://www.youtube.com/watch?v=...",
+            placeholder_text="https://youtube.com/... twitter.com/... instagram.com/...",
             height=38,
         )
         self.url_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
@@ -314,8 +314,8 @@ class YTBDownloader(ctk.CTk):
             messagebox.showerror("Erro", "Por favor, insira o link do vídeo.")
             return None
 
-        if not re.match(r"https?://(www\.)?(youtube\.com|youtu\.be)/", url):
-            messagebox.showerror("Erro", "Link inválido. Use um link do YouTube.")
+        if not re.match(r"https?://", url):
+            messagebox.showerror("Erro", "Link inválido. Insira uma URL válida (https://...).")
             return None
 
         if self.format_var.get() == "MP3" and not FFMPEG_AVAILABLE:
