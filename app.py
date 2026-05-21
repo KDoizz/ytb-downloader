@@ -318,6 +318,9 @@ class YTBDownloader(ctk.CTk):
             messagebox.showerror("Erro", "Link inválido. Insira uma URL válida (https://...).")
             return None
 
+        # x.com é o novo domínio do Twitter — yt-dlp versões antigas só reconhecem twitter.com
+        url = re.sub(r"^(https?://)(?:www\.)?x\.com/", r"\1twitter.com/", url)
+
         if self.format_var.get() == "MP3" and not FFMPEG_AVAILABLE:
             messagebox.showerror("Erro", "ffmpeg não está disponível. Tente reiniciar o app.")
             return None
@@ -395,9 +398,10 @@ class YTBDownloader(ctk.CTk):
                 f"+bestaudio[ext=m4a]"
                 f"/best[height<={height}][ext=mp4]"
                 f"/best[height<={height}]"
+                f"/best"
             )
         else:
-            fmt_str = f"best[height<={height}][ext=mp4]/best[height<={height}]"
+            fmt_str = f"best[height<={height}][ext=mp4]/best[height<={height}]/best"
 
         return {**base, "format": fmt_str, "merge_output_format": "mp4"}
 
