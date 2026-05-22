@@ -16,9 +16,12 @@ class DownloadOptions:
     fmt: str = "MP4"
     quality: str = "720p"
     subtitles: bool = False
+    subtitle_langs: list[str] = field(default_factory=list)
+    subtitle_fmt: str = "srt"
     chapters: bool = False
     thumbnail_dl: bool = False
     metadata: bool = False
+    comments: bool = False
 
 
 @dataclass
@@ -126,9 +129,10 @@ class AppState:
         if not LIBRARY_FILE.exists():
             return
         try:
+            valid_keys = set(DownloadOptions.__dataclass_fields__.keys())
             for item in json.loads(LIBRARY_FILE.read_text("utf-8")):
                 opts_raw = item.pop("options", {})
-                valid = {k: v for k, v in opts_raw.items() if hasattr(DownloadOptions, k)}
+                valid = {k: v for k, v in opts_raw.items() if k in valid_keys}
                 opts = DownloadOptions(**valid)
                 self.library.append(DownloadJob(options=opts, **item))
         except Exception:

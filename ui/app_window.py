@@ -5,6 +5,7 @@ import customtkinter as ctk
 from core import updater
 from core.queue_manager import QueueManager
 from state.app_state import AppState, DownloadJob
+from state.presets import PresetManager
 from ui.logo import LogoWidget
 from ui.theme import (
     ACCENT, BG, BG_ELEV, BG_ELEV_2, BORDER,
@@ -27,6 +28,7 @@ class VexApp(ctk.CTk):
         self._download_url: str | None = None
         self._state = AppState()
         self._queue = QueueManager(self._state)
+        self._presets = PresetManager()
 
         self._build_header()
         self._build_update_banner()
@@ -34,6 +36,14 @@ class VexApp(ctk.CTk):
 
         # Auto-detect clipboard when window regains focus
         self.bind("<FocusIn>", self._on_focus_in)
+
+        # Keyboard shortcuts
+        self.bind("<Control-Key-1>", lambda e: self._tabview.set("Novo"))
+        self.bind("<Control-Key-2>", lambda e: self._tabview.set("Fila"))
+        self.bind("<Control-Key-3>", lambda e: self._tabview.set("Biblioteca"))
+        self.bind("<Control-n>", lambda e: self._tabview.set("Novo"))
+        self.bind("<Control-l>", lambda e: (self._tabview.set("Novo"), self._novo_view._paste_and_analyze()))
+        self.bind("<Escape>", self._on_escape)
 
         updater.check_update_async(
             on_new_version=lambda v, url: self.after(0, self._show_update_banner, v, url),
@@ -109,6 +119,7 @@ class VexApp(ctk.CTk):
         self._novo_view = NovoView(
             self._tabview.tab("Novo"),
             on_start_download=self._on_start_download,
+            preset_manager=self._presets,
         )
         self._novo_view.pack(fill="both", expand=True)
 
@@ -134,6 +145,10 @@ class VexApp(ctk.CTk):
     def _on_focus_in(self, event):
         if event.widget == self:
             self.after(100, self._novo_view.check_clipboard)
+
+    def _on_escape(self, event):
+        if self._novo_view._state == "ANALYZING":
+            self._novo_view._cancel()
 
     # ── Update check ──────────────────────────────────────────────────────────
 

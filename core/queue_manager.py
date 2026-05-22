@@ -57,11 +57,22 @@ class QueueManager:
         opts = job.options
         extra: dict = {}
         if opts.subtitles:
-            extra.update(writesubtitles=True, subtitleslangs=["pt-BR", "en"], subtitlesformat="srt")
+            langs = opts.subtitle_langs or ["pt-BR", "en"]
+            fmt = opts.subtitle_fmt or "srt"
+            embed = fmt in ("embutido", "ambos")
+            extra.update(writesubtitles=True, subtitleslangs=langs)
+            if fmt in ("srt", "ambos"):
+                extra["subtitlesformat"] = "srt"
+            if embed:
+                extra["embedsubtitles"] = True
+        if opts.chapters:
+            extra["addchapters"] = True
         if opts.thumbnail_dl:
-            extra["writethumbnail"] = True
+            extra.update(writethumbnail=True, embedthumbnail=True)
         if opts.metadata:
             extra.update(writedescription=True, writeinfojson=True)
+        if opts.comments:
+            extra.update(getcomments=True, writecomments=True)
 
         dl.download(
             job.url, job.output_dir,

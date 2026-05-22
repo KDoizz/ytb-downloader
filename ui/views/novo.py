@@ -14,6 +14,7 @@ import customtkinter as ctk
 
 import core.downloader as dl
 from state.app_state import DownloadJob, DownloadOptions
+from state.presets import PresetManager, Preset
 from ui.theme import (
     ACCENT, BG_ELEV, BG_ELEV_2, BORDER,
     TEXT, TEXT_SOFT, TEXT_FAINT,
@@ -30,9 +31,16 @@ _SPINNER = "⣾⣽⣻⢿⡿⣟⣯⣷"
 
 
 class NovoView(ctk.CTkFrame):
-    def __init__(self, parent, on_start_download: Callable[[DownloadJob], None] | None = None, **kwargs):
+    def __init__(
+        self,
+        parent,
+        on_start_download: Callable[[DownloadJob], None] | None = None,
+        preset_manager: PresetManager | None = None,
+        **kwargs,
+    ):
         super().__init__(parent, fg_color="transparent", **kwargs)
         self._on_start_download = on_start_download
+        self._presets = preset_manager or PresetManager()
         self._state = "EMPTY"
         self._info: dict | None = None
         self._cancel_event = threading.Event()
@@ -177,6 +185,29 @@ class NovoView(ctk.CTkFrame):
         )
         self._meta_lbl.pack(anchor="w", pady=(2, 0))
 
+        # Preset row
+        preset_row = ctk.CTkFrame(self._frame_result, fg_color="transparent")
+        preset_row.pack(fill="x", padx=4, pady=(0, 8))
+        ctk.CTkLabel(
+            preset_row, text="Preset",
+            text_color=TEXT_SOFT, font=ctk.CTkFont(size=12),
+        ).pack(side="left", padx=(2, 8))
+        self._preset_var = ctk.StringVar(value="Nenhum")
+        self._preset_menu = ctk.CTkOptionMenu(
+            preset_row, variable=self._preset_var,
+            values=["Nenhum"], width=140, height=30,
+            fg_color=BG_ELEV_2, button_color=ACCENT, button_hover_color=ACCENT,
+            text_color=TEXT, corner_radius=6, command=self._apply_preset,
+        )
+        self._preset_menu.pack(side="left")
+        ctk.CTkButton(
+            preset_row, text="Salvar preset", width=110, height=30,
+            fg_color="transparent", hover_color=BG_ELEV_2,
+            border_width=1, border_color=BORDER,
+            text_color=TEXT_SOFT, corner_radius=8, font=ctk.CTkFont(size=12),
+            command=self._save_preset,
+        ).pack(side="left", padx=(8, 0))
+
         # MÍDIA
         ctk.CTkLabel(
             self._frame_result, text="MÍDIA",
@@ -235,33 +266,64 @@ class NovoView(ctk.CTkFrame):
         )
         extras_card.pack(fill="x", padx=4, pady=(0, 10))
 
-        ex_row = ctk.CTkFrame(extras_card, fg_color="transparent")
-        ex_row.pack(fill="x", padx=14, pady=10)
+        # Row 1: Legendas + lang/fmt selectors (shown when checked)
+        subs_row = ctk.CTkFrame(extras_card, fg_color="transparent")
+        subs_row.pack(fill="x", padx=14, pady=(10, 4))
 
         self._subs_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            ex_row, text="Legendas", variable=self._subs_var,
+            subs_row, text="Legendas", variable=self._subs_var,
             fg_color=ACCENT, hover_color=ACCENT, border_color=BORDER,
-            command=self._update_dl_btn,
-        ).pack(side="left", padx=(0, 14))
+            command=self._on_subs_toggle,
+        ).pack(side="left")
+
+        self._subs_extras = ctk.CTkFrame(subs_row, fg_color="transparent")
+        self._subs_lang_var = ctk.StringVar(value="pt-BR, en")
+        self._subs_lang_menu = ctk.CTkOptionMenu(
+            self._subs_extras, variable=self._subs_lang_var,
+            values=["pt-BR, en", "pt-BR", "en", "es"],
+            width=120, height=26,
+            fg_color=BG_ELEV_2, button_color=ACCENT, button_hover_color=ACCENT,
+            text_color=TEXT, corner_radius=6,
+        )
+        self._subs_lang_menu.pack(side="left", padx=(8, 4))
+        self._subs_fmt_var = ctk.StringVar(value="srt")
+        ctk.CTkOptionMenu(
+            self._subs_extras, variable=self._subs_fmt_var,
+            values=["srt", "embutido", "ambos"],
+            width=90, height=26,
+            fg_color=BG_ELEV_2, button_color=ACCENT, button_hover_color=ACCENT,
+            text_color=TEXT, corner_radius=6,
+        ).pack(side="left")
+
+        # Row 2: Capítulos + Thumbnail + Metadados + Comentários
+        ex_row2 = ctk.CTkFrame(extras_card, fg_color="transparent")
+        ex_row2.pack(fill="x", padx=14, pady=(0, 10))
 
         self._chaps_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            ex_row, text="Capítulos", variable=self._chaps_var,
+            ex_row2, text="Capítulos", variable=self._chaps_var,
             fg_color=ACCENT, hover_color=ACCENT, border_color=BORDER,
             command=self._update_dl_btn,
         ).pack(side="left", padx=(0, 14))
 
         self._thumb_dl_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            ex_row, text="Thumbnail", variable=self._thumb_dl_var,
+            ex_row2, text="Thumbnail", variable=self._thumb_dl_var,
             fg_color=ACCENT, hover_color=ACCENT, border_color=BORDER,
             command=self._update_dl_btn,
         ).pack(side="left", padx=(0, 14))
 
         self._meta_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            ex_row, text="Metadados", variable=self._meta_var,
+            ex_row2, text="Metadados", variable=self._meta_var,
+            fg_color=ACCENT, hover_color=ACCENT, border_color=BORDER,
+            command=self._update_dl_btn,
+        ).pack(side="left", padx=(0, 14))
+
+        self._comments_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            ex_row2, text="Comentários", variable=self._comments_var,
             fg_color=ACCENT, hover_color=ACCENT, border_color=BORDER,
             command=self._update_dl_btn,
         ).pack(side="left")
@@ -406,6 +468,15 @@ class NovoView(ctk.CTkFrame):
         self._quality_var.set(heights[0] if heights else "720p")
 
         self._go("RESULT")
+        self._refresh_preset_menu()
+        self._preset_var.set("Nenhum")
+
+        # Subtitle langs from info
+        langs = dl.get_subtitle_langs(info)
+        if langs:
+            opts = list(dict.fromkeys(["pt-BR, en"] + langs[:4]))
+            self._subs_lang_menu.configure(values=opts)
+
         self._update_dl_btn()
 
         # Thumbnail in background
@@ -434,12 +505,78 @@ class NovoView(ctk.CTkFrame):
         self._error_lbl.pack(fill="x", padx=4, pady=(0, 6), before=self._dl_btn)
         self._update_dl_btn()
 
+    def _on_subs_toggle(self):
+        if self._subs_var.get():
+            self._subs_extras.pack(side="left")
+        else:
+            self._subs_extras.pack_forget()
+        self._update_dl_btn()
+
+    def _refresh_preset_menu(self, select: str | None = None):
+        names = ["Nenhum"] + self._presets.names()
+        self._preset_menu.configure(values=names)
+        if select and select in names:
+            self._preset_var.set(select)
+
+    def _apply_preset(self, name: str):
+        if name == "Nenhum":
+            return
+        preset = self._presets.get(name)
+        if not preset:
+            return
+        is_audio = preset.fmt == "MP3"
+        self._media_var.set(1 if is_audio else 0)
+        if is_audio:
+            self._bitrate_var.set(preset.quality)
+        else:
+            self._quality_var.set(preset.quality)
+        self._subs_var.set(preset.subtitles)
+        self._on_subs_toggle()
+        if preset.subtitle_langs:
+            lang_str = ", ".join(preset.subtitle_langs)
+            cur_vals = self._subs_lang_menu.cget("values") or []
+            if lang_str not in cur_vals:
+                self._subs_lang_menu.configure(values=list(cur_vals) + [lang_str])
+            self._subs_lang_var.set(lang_str)
+        self._subs_fmt_var.set(preset.subtitle_fmt or "srt")
+        self._chaps_var.set(preset.chapters)
+        self._thumb_dl_var.set(preset.thumbnail_dl)
+        self._meta_var.set(preset.metadata)
+        self._comments_var.set(preset.comments)
+        self._update_dl_btn()
+
+    def _save_preset(self):
+        dialog = ctk.CTkInputDialog(text="Nome do preset:", title="Salvar preset")
+        name = dialog.get_input()
+        if not name or not name.strip():
+            return
+        name = name.strip()
+        is_audio = self._media_var.get() == 1
+        langs_raw = self._subs_lang_var.get()
+        langs = [lg.strip() for lg in langs_raw.split(",") if lg.strip()]
+        from state.presets import Preset
+        preset = Preset(
+            name=name,
+            fmt="MP3" if is_audio else "MP4",
+            quality=self._bitrate_var.get() if is_audio else self._quality_var.get(),
+            subtitles=self._subs_var.get(),
+            subtitle_langs=langs,
+            subtitle_fmt=self._subs_fmt_var.get(),
+            chapters=self._chaps_var.get(),
+            thumbnail_dl=self._thumb_dl_var.get(),
+            metadata=self._meta_var.get(),
+            comments=self._comments_var.get(),
+        )
+        self._presets.save(preset)
+        self._refresh_preset_menu(select=name)
+
     def _update_dl_btn(self):
         extras = sum([
             self._subs_var.get(),
             self._chaps_var.get(),
             self._thumb_dl_var.get(),
             self._meta_var.get(),
+            self._comments_var.get(),
         ])
         n = 1 + extras
         label = "item" if n == 1 else "itens"
@@ -462,13 +599,18 @@ class NovoView(ctk.CTkFrame):
             return
 
         is_audio = self._media_var.get() == 1
+        langs_raw = self._subs_lang_var.get()
+        subtitle_langs = [lg.strip() for lg in langs_raw.split(",") if lg.strip()]
         opts = DownloadOptions(
             fmt="MP3" if is_audio else "MP4",
             quality=self._bitrate_var.get() if is_audio else self._quality_var.get(),
             subtitles=self._subs_var.get(),
+            subtitle_langs=subtitle_langs,
+            subtitle_fmt=self._subs_fmt_var.get(),
             chapters=self._chaps_var.get(),
             thumbnail_dl=self._thumb_dl_var.get(),
             metadata=self._meta_var.get(),
+            comments=self._comments_var.get(),
         )
 
         title = (self._info or {}).get("title") or self._current_url
@@ -490,6 +632,11 @@ class NovoView(ctk.CTkFrame):
         self._go("EMPTY")
         self._info = None
         self._current_url = ""
-        # Reset result view state
         self._thumb_lbl.configure(image=None, text="")
         self._error_lbl.pack_forget()
+        self._subs_var.set(False)
+        self._subs_extras.pack_forget()
+        self._chaps_var.set(False)
+        self._thumb_dl_var.set(False)
+        self._meta_var.set(False)
+        self._comments_var.set(False)
