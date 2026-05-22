@@ -158,10 +158,18 @@ def _extract_audio(video_path: str, temp_dir: str) -> str:
 
 
 def _embed_srt(video_path: str, srt_path: str, ffmpeg: str):
-    out = video_path.rsplit(".", 1)
-    out_path = out[0] + "_legendado." + (out[1] if len(out) > 1 else "mp4")
+    p = Path(video_path)
+    out_path = str(p.with_stem(p.stem + "_legendado"))
+    sub_codec = "mov_text" if p.suffix.lower() in (".mp4", ".m4v") else "srt"
     subprocess.run(
-        [ffmpeg, "-y", "-i", video_path, "-i", srt_path,
-         "-c", "copy", "-c:s", "mov_text", out_path],
+        [ffmpeg, "-y",
+         "-i", video_path,
+         "-i", srt_path,
+         "-map", "0",
+         "-map", "1",
+         "-c:v", "copy",
+         "-c:a", "copy",
+         "-c:s", sub_codec,
+         out_path],
         check=True, capture_output=True,
     )
