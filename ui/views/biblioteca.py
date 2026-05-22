@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from datetime import datetime
 
 import customtkinter as ctk
@@ -150,7 +149,8 @@ class BibliotecaView(ctk.CTkFrame):
 
     def _open_folder(self, path: str):
         try:
-            if os.path.isdir(path):
-                subprocess.Popen(["explorer", path])
+            norm = os.path.normpath(path)
+            if os.path.isdir(norm):
+                os.startfile(norm)
         except Exception:
             pass
