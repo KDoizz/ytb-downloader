@@ -16,8 +16,10 @@ class DownloadOptions:
     fmt: str = "MP4"
     quality: str = "720p"
     subtitles: bool = False
+    subtitle_source: str = "site"   # "site" | "whisper"
     subtitle_langs: list[str] = field(default_factory=list)
     subtitle_fmt: str = "srt"
+    whisper_model: str = "base"
     chapters: bool = False
     thumbnail_dl: bool = False
     metadata: bool = False

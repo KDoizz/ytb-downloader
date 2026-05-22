@@ -278,15 +278,33 @@ class NovoView(ctk.CTkFrame):
         ).pack(side="left")
 
         self._subs_extras = ctk.CTkFrame(subs_row, fg_color="transparent")
-        self._subs_lang_var = ctk.StringVar(value="pt-BR, en")
+
+        # Source toggle: Site | Whisper
+        self._subs_source_var = ctk.StringVar(value="Site")
+        ctk.CTkSegmentedButton(
+            self._subs_extras,
+            values=["Site", "Whisper ✦"],
+            variable=self._subs_source_var,
+            width=160, height=26,
+            fg_color=BG_ELEV_2,
+            selected_color=ACCENT, selected_hover_color=ACCENT,
+            unselected_color=BG_ELEV_2, unselected_hover_color=BG_ELEV_2,
+            text_color=TEXT, font=ctk.CTkFont(size=12),
+            command=self._on_subs_source_change,
+        ).pack(side="left", padx=(8, 4))
+
+        # Language (target for Whisper, filter for Site)
+        self._subs_lang_var = ctk.StringVar(value="pt-BR")
         self._subs_lang_menu = ctk.CTkOptionMenu(
             self._subs_extras, variable=self._subs_lang_var,
-            values=["pt-BR, en", "pt-BR", "en", "es"],
-            width=120, height=26,
+            values=["pt-BR", "en", "es", "fr", "de", "ja", "zh-CN", "ko", "ru", "ar"],
+            width=90, height=26,
             fg_color=BG_ELEV_2, button_color=ACCENT, button_hover_color=ACCENT,
             text_color=TEXT, corner_radius=6,
         )
-        self._subs_lang_menu.pack(side="left", padx=(8, 4))
+        self._subs_lang_menu.pack(side="left", padx=(0, 4))
+
+        # Format
         self._subs_fmt_var = ctk.StringVar(value="srt")
         ctk.CTkOptionMenu(
             self._subs_extras, variable=self._subs_fmt_var,
@@ -294,7 +312,17 @@ class NovoView(ctk.CTkFrame):
             width=90, height=26,
             fg_color=BG_ELEV_2, button_color=ACCENT, button_hover_color=ACCENT,
             text_color=TEXT, corner_radius=6,
-        ).pack(side="left")
+        ).pack(side="left", padx=(0, 4))
+
+        # Whisper model (shown only when Whisper selected)
+        self._whisper_model_var = ctk.StringVar(value="base")
+        self._whisper_model_menu = ctk.CTkOptionMenu(
+            self._subs_extras, variable=self._whisper_model_var,
+            values=["tiny", "base", "small", "medium"],
+            width=80, height=26,
+            fg_color=BG_ELEV_2, button_color=ACCENT, button_hover_color=ACCENT,
+            text_color=TEXT, corner_radius=6,
+        )
 
         # Row 2: Capítulos + Thumbnail + Metadados + Comentários
         ex_row2 = ctk.CTkFrame(extras_card, fg_color="transparent")
@@ -508,9 +536,16 @@ class NovoView(ctk.CTkFrame):
     def _on_subs_toggle(self):
         if self._subs_var.get():
             self._subs_extras.pack(side="left")
+            self._on_subs_source_change(self._subs_source_var.get())
         else:
             self._subs_extras.pack_forget()
         self._update_dl_btn()
+
+    def _on_subs_source_change(self, value: str):
+        if value == "Whisper ✦":
+            self._whisper_model_menu.pack(side="left")
+        else:
+            self._whisper_model_menu.pack_forget()
 
     def _refresh_preset_menu(self, select: str | None = None):
         names = ["Nenhum"] + self._presets.names()
@@ -531,14 +566,17 @@ class NovoView(ctk.CTkFrame):
         else:
             self._quality_var.set(preset.quality)
         self._subs_var.set(preset.subtitles)
+        src = getattr(preset, "subtitle_source", "site")
+        self._subs_source_var.set("Whisper ✦" if src == "whisper" else "Site")
         self._on_subs_toggle()
         if preset.subtitle_langs:
-            lang_str = ", ".join(preset.subtitle_langs)
-            cur_vals = self._subs_lang_menu.cget("values") or []
-            if lang_str not in cur_vals:
-                self._subs_lang_menu.configure(values=list(cur_vals) + [lang_str])
-            self._subs_lang_var.set(lang_str)
+            lang = preset.subtitle_langs[0]
+            cur_vals = list(self._subs_lang_menu.cget("values") or [])
+            if lang not in cur_vals:
+                self._subs_lang_menu.configure(values=cur_vals + [lang])
+            self._subs_lang_var.set(lang)
         self._subs_fmt_var.set(preset.subtitle_fmt or "srt")
+        self._whisper_model_var.set(getattr(preset, "whisper_model", "base"))
         self._chaps_var.set(preset.chapters)
         self._thumb_dl_var.set(preset.thumbnail_dl)
         self._meta_var.set(preset.metadata)
@@ -552,16 +590,18 @@ class NovoView(ctk.CTkFrame):
             return
         name = name.strip()
         is_audio = self._media_var.get() == 1
-        langs_raw = self._subs_lang_var.get()
-        langs = [lg.strip() for lg in langs_raw.split(",") if lg.strip()]
+        is_whisper = self._subs_source_var.get() == "Whisper ✦"
+        lang = self._subs_lang_var.get().strip()
         from state.presets import Preset
         preset = Preset(
             name=name,
             fmt="MP3" if is_audio else "MP4",
             quality=self._bitrate_var.get() if is_audio else self._quality_var.get(),
             subtitles=self._subs_var.get(),
-            subtitle_langs=langs,
+            subtitle_source="whisper" if is_whisper else "site",
+            subtitle_langs=[lang] if lang else [],
             subtitle_fmt=self._subs_fmt_var.get(),
+            whisper_model=self._whisper_model_var.get(),
             chapters=self._chaps_var.get(),
             thumbnail_dl=self._thumb_dl_var.get(),
             metadata=self._meta_var.get(),
@@ -599,14 +639,17 @@ class NovoView(ctk.CTkFrame):
             return
 
         is_audio = self._media_var.get() == 1
-        langs_raw = self._subs_lang_var.get()
-        subtitle_langs = [lg.strip() for lg in langs_raw.split(",") if lg.strip()]
+        sub_source = self._subs_source_var.get()
+        is_whisper = sub_source == "Whisper ✦"
+        subtitle_langs = [self._subs_lang_var.get().strip()] if self._subs_var.get() else []
         opts = DownloadOptions(
             fmt="MP3" if is_audio else "MP4",
             quality=self._bitrate_var.get() if is_audio else self._quality_var.get(),
             subtitles=self._subs_var.get(),
+            subtitle_source="whisper" if is_whisper else "site",
             subtitle_langs=subtitle_langs,
             subtitle_fmt=self._subs_fmt_var.get(),
+            whisper_model=self._whisper_model_var.get(),
             chapters=self._chaps_var.get(),
             thumbnail_dl=self._thumb_dl_var.get(),
             metadata=self._meta_var.get(),
@@ -635,6 +678,7 @@ class NovoView(ctk.CTkFrame):
         self._thumb_lbl.configure(image=None, text="")
         self._error_lbl.pack_forget()
         self._subs_var.set(False)
+        self._subs_source_var.set("Site")
         self._subs_extras.pack_forget()
         self._chaps_var.set(False)
         self._thumb_dl_var.set(False)
