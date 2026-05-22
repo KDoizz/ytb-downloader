@@ -1,220 +1,449 @@
+from __future__ import annotations
+
+import io
 import os
 import re
 import sys
 import threading
-from tkinter import filedialog, messagebox
+import urllib.request
+from pathlib import Path
+from tkinter import filedialog
+from typing import Callable
 
 import customtkinter as ctk
 
 import core.downloader as dl
+from state.app_state import DownloadJob, DownloadOptions
 from ui.theme import (
     ACCENT, BG_ELEV, BG_ELEV_2, BORDER,
     TEXT, TEXT_SOFT, TEXT_FAINT,
-    SUCCESS, WARNING, DANGER,
+    DANGER, WARNING,
 )
+
+try:
+    from PIL import Image
+    _PIL = True
+except ImportError:
+    _PIL = False
+
+_SPINNER = "⣾⣽⣻⢿⡿⣟⣯⣷"
 
 
 class NovoView(ctk.CTkFrame):
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent, on_start_download: Callable[[DownloadJob], None] | None = None, **kwargs):
         super().__init__(parent, fg_color="transparent", **kwargs)
-        self._is_downloading = False
-        self._download_path = os.path.join(os.path.expanduser("~"), "Downloads")
-        self._build()
-        self._init_ffmpeg()
+        self._on_start_download = on_start_download
+        self._state = "EMPTY"
+        self._info: dict | None = None
+        self._cancel_event = threading.Event()
+        self._spinner_idx = 0
+        self._sugg_url = ""
+        self._current_url = ""
+        self._download_path = str(Path.home() / "Downloads")
 
-    def _build(self):
-        ctk.CTkLabel(
-            self,
-            text="Link do vídeo / mídia",
-            text_color=TEXT_SOFT,
-            font=ctk.CTkFont(size=12),
-        ).pack(anchor="w", padx=20, pady=(16, 4))
+        self._build_url_bar()
+        self._build_empty()
+        self._build_analyzing()
+        self._build_result()
+        self._go("EMPTY")
 
-        url_row = ctk.CTkFrame(self, fg_color="transparent")
-        url_row.pack(fill="x", padx=20)
-        url_row.columnconfigure(0, weight=1)
+        # Check clipboard after UI is ready
+        self.after(400, self.check_clipboard)
 
-        self._url_entry = ctk.CTkEntry(
-            url_row,
-            placeholder_text="https://youtube.com/... twitter.com/... instagram.com/...",
-            height=42,
-            fg_color=BG_ELEV_2,
-            border_color=BORDER,
-            border_width=1,
-            text_color=TEXT,
-            placeholder_text_color=TEXT_FAINT,
-            corner_radius=8,
+    # ── URL bar ───────────────────────────────────────────────────────────────
+
+    def _build_url_bar(self):
+        self._frame_url_bar = ctk.CTkFrame(
+            self, fg_color=BG_ELEV, corner_radius=8,
+            border_width=1, border_color=BORDER,
         )
-        self._url_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
-
+        self._url_display = ctk.CTkLabel(
+            self._frame_url_bar, text="", text_color=TEXT_SOFT,
+            font=ctk.CTkFont(family="Consolas", size=11), anchor="w",
+        )
+        self._url_display.pack(side="left", fill="x", expand=True, padx=(12, 0), pady=8)
         ctk.CTkButton(
-            url_row,
-            text="Colar",
-            width=72,
-            height=42,
-            fg_color=BG_ELEV_2,
-            hover_color=BG_ELEV_2,
-            border_width=1,
-            border_color=BORDER,
-            text_color=TEXT_SOFT,
-            corner_radius=8,
-            command=self._paste_url,
-        ).grid(row=0, column=1)
+            self._frame_url_bar, text="✕", width=32, height=28,
+            fg_color="transparent", hover_color=BG_ELEV_2,
+            text_color=TEXT_FAINT, corner_radius=6,
+            command=self._cancel,
+        ).pack(side="right", padx=6, pady=4)
 
-        opts = ctk.CTkFrame(self, fg_color="transparent")
-        opts.pack(fill="x", padx=20, pady=(14, 0))
-        opts.columnconfigure(0, weight=1)
-        opts.columnconfigure(1, weight=1)
+    # ── EMPTY state ───────────────────────────────────────────────────────────
 
-        fmt_box = ctk.CTkFrame(
-            opts, fg_color=BG_ELEV, corner_radius=10,
+    def _build_empty(self):
+        self._frame_empty = ctk.CTkFrame(self, fg_color="transparent")
+        self._frame_empty.rowconfigure(0, weight=1)
+        self._frame_empty.rowconfigure(1, weight=0)
+        self._frame_empty.columnconfigure(0, weight=1)
+
+        # Drop zone
+        dropzone = ctk.CTkFrame(
+            self._frame_empty, fg_color=BG_ELEV, corner_radius=16,
+            border_width=2, border_color=ACCENT,
+        )
+        dropzone.grid(row=0, column=0, sticky="nsew", padx=20, pady=(12, 6))
+
+        inner = ctk.CTkFrame(dropzone, fg_color="transparent")
+        inner.place(relx=0.5, rely=0.48, anchor="center")
+
+        ctk.CTkLabel(
+            inner, text="⬇", font=ctk.CTkFont(size=42), text_color=ACCENT,
+        ).pack()
+        ctk.CTkLabel(
+            inner, text="cole qualquer link aqui",
+            font=ctk.CTkFont(size=15, weight="bold"), text_color=TEXT,
+        ).pack(pady=(6, 4))
+        ctk.CTkLabel(
+            inner,
+            text="youtube · twitter/x · instagram · tiktok · vimeo · soundcloud · +1000",
+            text_color=TEXT_FAINT, font=ctk.CTkFont(family="Consolas", size=11),
+        ).pack()
+
+        chip_row = ctk.CTkFrame(inner, fg_color="transparent")
+        chip_row.pack(pady=(16, 0))
+        ctk.CTkButton(
+            chip_row, text="Ctrl+V  colar", width=120, height=30,
+            fg_color=BG_ELEV_2, hover_color=BORDER,
+            border_width=1, border_color=BORDER,
+            text_color=TEXT_SOFT, corner_radius=20, font=ctk.CTkFont(size=12),
+            command=self._paste_and_analyze,
+        ).pack(side="left", padx=4)
+
+        # Clipboard suggestion (hidden by default)
+        self._sugg_frame = ctk.CTkFrame(self._frame_empty, fg_color="transparent")
+        ctk.CTkLabel(
+            self._sugg_frame, text="SUGESTÃO DO CLIPBOARD",
+            text_color=TEXT_FAINT, font=ctk.CTkFont(size=10, weight="bold"),
+        ).pack(anchor="w", padx=20, pady=(0, 4))
+        self._sugg_btn = ctk.CTkButton(
+            self._sugg_frame, text="", anchor="w",
+            fg_color=BG_ELEV, hover_color=BG_ELEV_2,
+            border_width=1, border_color=BORDER,
+            text_color=TEXT_SOFT, corner_radius=8, height=34,
+            font=ctk.CTkFont(family="Consolas", size=11),
+            command=self._use_suggestion,
+        )
+        self._sugg_btn.pack(fill="x", padx=20, pady=(0, 8))
+
+    # ── ANALYZING state ───────────────────────────────────────────────────────
+
+    def _build_analyzing(self):
+        self._frame_analyzing = ctk.CTkFrame(self, fg_color="transparent")
+        inner = ctk.CTkFrame(self._frame_analyzing, fg_color="transparent")
+        inner.place(relx=0.5, rely=0.42, anchor="center")
+        self._spinner_lbl = ctk.CTkLabel(
+            inner, text="⣾  analisando link...",
+            text_color=TEXT_SOFT, font=ctk.CTkFont(size=14),
+        )
+        self._spinner_lbl.pack()
+
+    # ── RESULT state ──────────────────────────────────────────────────────────
+
+    def _build_result(self):
+        self._frame_result = ctk.CTkScrollableFrame(
+            self, fg_color="transparent",
+            scrollbar_button_color=BG_ELEV_2,
+            scrollbar_button_hover_color=BORDER,
+        )
+
+        # Info card
+        info_card = ctk.CTkFrame(
+            self._frame_result, fg_color=BG_ELEV, corner_radius=12,
             border_width=1, border_color=BORDER,
         )
-        fmt_box.grid(row=0, column=0, padx=(0, 6), sticky="nsew")
-        ctk.CTkLabel(
-            fmt_box, text="Formato",
-            text_color=TEXT_SOFT, font=ctk.CTkFont(size=12),
-        ).pack(pady=(10, 4))
-        self._format_var = ctk.StringVar(value="MP4")
-        ctk.CTkSegmentedButton(
-            fmt_box,
-            values=["MP4", "MP3"],
-            variable=self._format_var,
-            command=self._on_format_change,
-            fg_color=BG_ELEV_2,
-            selected_color=ACCENT,
-            selected_hover_color=ACCENT,
-            unselected_color=BG_ELEV_2,
-            unselected_hover_color=BG_ELEV_2,
-            text_color=TEXT,
-            corner_radius=8,
-        ).pack(padx=12, pady=(0, 10))
+        info_card.pack(fill="x", padx=4, pady=(4, 10))
 
-        qual_box = ctk.CTkFrame(
-            opts, fg_color=BG_ELEV, corner_radius=10,
+        card_row = ctk.CTkFrame(info_card, fg_color="transparent")
+        card_row.pack(fill="x", padx=12, pady=12)
+
+        self._thumb_lbl = ctk.CTkLabel(
+            card_row, text="", width=120, height=68,
+            fg_color=BG_ELEV_2, corner_radius=6,
+        )
+        self._thumb_lbl.pack(side="left", padx=(0, 12))
+
+        meta_col = ctk.CTkFrame(card_row, fg_color="transparent")
+        meta_col.pack(side="left", fill="both", expand=True)
+
+        self._title_lbl = ctk.CTkLabel(
+            meta_col, text="", wraplength=340, justify="left",
+            font=ctk.CTkFont(size=13, weight="bold"), text_color=TEXT, anchor="w",
+        )
+        self._title_lbl.pack(anchor="w")
+        self._meta_lbl = ctk.CTkLabel(
+            meta_col, text="", text_color=TEXT_SOFT,
+            font=ctk.CTkFont(family="Consolas", size=11), anchor="w",
+        )
+        self._meta_lbl.pack(anchor="w", pady=(2, 0))
+
+        # MÍDIA
+        ctk.CTkLabel(
+            self._frame_result, text="MÍDIA",
+            text_color=TEXT_FAINT, font=ctk.CTkFont(size=10, weight="bold"),
+        ).pack(anchor="w", padx=6, pady=(2, 4))
+
+        media_card = ctk.CTkFrame(
+            self._frame_result, fg_color=BG_ELEV, corner_radius=10,
             border_width=1, border_color=BORDER,
         )
-        qual_box.grid(row=0, column=1, padx=(6, 0), sticky="nsew")
-        ctk.CTkLabel(
-            qual_box, text="Qualidade",
-            text_color=TEXT_SOFT, font=ctk.CTkFont(size=12),
-        ).pack(pady=(10, 4))
+        media_card.pack(fill="x", padx=4, pady=(0, 10))
+
+        self._media_var = ctk.IntVar(value=0)
+
+        v_row = ctk.CTkFrame(media_card, fg_color="transparent")
+        v_row.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkRadioButton(
+            v_row, text="Vídeo + áudio", variable=self._media_var, value=0,
+            fg_color=ACCENT, hover_color=ACCENT, text_color=TEXT,
+            command=self._update_dl_btn,
+        ).pack(side="left")
+        ctk.CTkLabel(v_row, text="MP4", text_color=TEXT_SOFT, font=ctk.CTkFont(size=12)).pack(side="left", padx=(10, 4))
         self._quality_var = ctk.StringVar(value="720p")
         self._quality_menu = ctk.CTkOptionMenu(
-            qual_box,
-            variable=self._quality_var,
-            values=["1080p", "720p", "480p", "360p", "240p"],
-            width=140,
-            fg_color=BG_ELEV_2,
-            button_color=ACCENT,
-            button_hover_color=ACCENT,
-            text_color=TEXT,
-            corner_radius=8,
+            v_row, variable=self._quality_var, values=["720p"], width=90, height=28,
+            fg_color=BG_ELEV_2, button_color=ACCENT, button_hover_color=ACCENT,
+            text_color=TEXT, corner_radius=6, command=lambda _: self._update_dl_btn(),
         )
-        self._quality_menu.pack(padx=12, pady=(0, 10))
+        self._quality_menu.pack(side="left")
 
+        a_row = ctk.CTkFrame(media_card, fg_color="transparent")
+        a_row.pack(fill="x", padx=14, pady=(0, 10))
+        ctk.CTkRadioButton(
+            a_row, text="Só áudio", variable=self._media_var, value=1,
+            fg_color=ACCENT, hover_color=ACCENT, text_color=TEXT,
+            command=self._update_dl_btn,
+        ).pack(side="left")
+        ctk.CTkLabel(a_row, text="MP3", text_color=TEXT_SOFT, font=ctk.CTkFont(size=12)).pack(side="left", padx=(10, 4))
+        self._bitrate_var = ctk.StringVar(value="192kbps")
+        ctk.CTkOptionMenu(
+            a_row, variable=self._bitrate_var,
+            values=["320kbps", "192kbps", "128kbps", "64kbps"],
+            width=100, height=28, fg_color=BG_ELEV_2, button_color=ACCENT,
+            button_hover_color=ACCENT, text_color=TEXT, corner_radius=6,
+        ).pack(side="left")
+
+        # EXTRAS
         ctk.CTkLabel(
-            self,
-            text="Pasta de destino",
-            text_color=TEXT_SOFT,
-            font=ctk.CTkFont(size=12),
-        ).pack(anchor="w", padx=20, pady=(14, 4))
+            self._frame_result, text="EXTRAS",
+            text_color=TEXT_FAINT, font=ctk.CTkFont(size=10, weight="bold"),
+        ).pack(anchor="w", padx=6, pady=(0, 4))
 
-        folder_row = ctk.CTkFrame(self, fg_color="transparent")
-        folder_row.pack(fill="x", padx=20)
+        extras_card = ctk.CTkFrame(
+            self._frame_result, fg_color=BG_ELEV, corner_radius=10,
+            border_width=1, border_color=BORDER,
+        )
+        extras_card.pack(fill="x", padx=4, pady=(0, 10))
+
+        ex_row = ctk.CTkFrame(extras_card, fg_color="transparent")
+        ex_row.pack(fill="x", padx=14, pady=10)
+
+        self._subs_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            ex_row, text="Legendas", variable=self._subs_var,
+            fg_color=ACCENT, hover_color=ACCENT, border_color=BORDER,
+            command=self._update_dl_btn,
+        ).pack(side="left", padx=(0, 14))
+
+        self._chaps_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            ex_row, text="Capítulos", variable=self._chaps_var,
+            fg_color=ACCENT, hover_color=ACCENT, border_color=BORDER,
+            command=self._update_dl_btn,
+        ).pack(side="left", padx=(0, 14))
+
+        self._thumb_dl_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            ex_row, text="Thumbnail", variable=self._thumb_dl_var,
+            fg_color=ACCENT, hover_color=ACCENT, border_color=BORDER,
+            command=self._update_dl_btn,
+        ).pack(side="left", padx=(0, 14))
+
+        self._meta_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            ex_row, text="Metadados", variable=self._meta_var,
+            fg_color=ACCENT, hover_color=ACCENT, border_color=BORDER,
+            command=self._update_dl_btn,
+        ).pack(side="left")
+
+        # Folder
+        ctk.CTkLabel(
+            self._frame_result, text="Pasta de destino",
+            text_color=TEXT_SOFT, font=ctk.CTkFont(size=12),
+        ).pack(anchor="w", padx=6, pady=(0, 4))
+
+        folder_row = ctk.CTkFrame(self._frame_result, fg_color="transparent")
+        folder_row.pack(fill="x", padx=4, pady=(0, 8))
         folder_row.columnconfigure(0, weight=1)
 
         self._folder_entry = ctk.CTkEntry(
-            folder_row,
-            height=42,
-            fg_color=BG_ELEV_2,
-            border_color=BORDER,
-            border_width=1,
-            text_color=TEXT,
-            corner_radius=8,
+            folder_row, height=36, fg_color=BG_ELEV_2, border_color=BORDER,
+            border_width=1, text_color=TEXT, corner_radius=8,
             font=ctk.CTkFont(family="Consolas", size=11),
         )
         self._folder_entry.insert(0, self._download_path)
         self._folder_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
 
         ctk.CTkButton(
-            folder_row,
-            text="Buscar",
-            width=72,
-            height=42,
-            fg_color=BG_ELEV_2,
-            hover_color=BG_ELEV_2,
-            border_width=1,
-            border_color=BORDER,
-            text_color=TEXT_SOFT,
-            corner_radius=8,
-            command=self._choose_folder,
+            folder_row, text="Trocar", width=72, height=36,
+            fg_color=BG_ELEV_2, hover_color=BG_ELEV_2,
+            border_width=1, border_color=BORDER,
+            text_color=TEXT_SOFT, corner_radius=8, command=self._choose_folder,
         ).grid(row=0, column=1)
 
-        self._download_btn = ctk.CTkButton(
-            self,
-            text="Baixar",
-            height=48,
+        # Error label (hidden by default)
+        self._error_lbl = ctk.CTkLabel(
+            self._frame_result, text="", text_color=DANGER,
+            font=ctk.CTkFont(size=12), wraplength=480, justify="left",
+        )
+
+        # Download button
+        self._dl_btn = ctk.CTkButton(
+            self._frame_result, text="Baixar 1 item", height=46,
             font=ctk.CTkFont(size=15, weight="bold"),
-            fg_color=ACCENT,
-            hover_color="#6344e0",
-            text_color=TEXT,
-            corner_radius=10,
+            fg_color=ACCENT, hover_color="#6344e0",
+            text_color=TEXT, corner_radius=10,
             command=self._start_download,
         )
-        self._download_btn.pack(fill="x", padx=20, pady=(20, 10))
+        self._dl_btn.pack(fill="x", padx=4, pady=(4, 12))
 
-        self._progress = ctk.CTkProgressBar(
-            self,
-            progress_color=ACCENT,
-            fg_color=BG_ELEV_2,
-            corner_radius=4,
-            height=6,
-        )
-        self._progress.pack(fill="x", padx=20)
-        self._progress.set(0)
+    # ── State machine ─────────────────────────────────────────────────────────
 
-        self._status = ctk.CTkLabel(
-            self,
-            text="Pronto para baixar",
-            text_color=TEXT_FAINT,
-            font=ctk.CTkFont(size=12),
-        )
-        self._status.pack(pady=(8, 4))
+    def _go(self, state: str):
+        self._state = state
+        self._frame_url_bar.pack_forget()
+        self._frame_empty.pack_forget()
+        self._frame_analyzing.pack_forget()
+        self._frame_result.pack_forget()
 
-    def _init_ffmpeg(self):
-        if getattr(sys, "frozen", False):
+        if state == "EMPTY":
+            self._frame_empty.pack(fill="both", expand=True)
+        elif state == "ANALYZING":
+            self._frame_url_bar.pack(fill="x", padx=20, pady=(12, 0))
+            self._frame_analyzing.pack(fill="both", expand=True)
+            self._tick_spinner()
+        elif state == "RESULT":
+            self._frame_url_bar.pack(fill="x", padx=20, pady=(12, 0))
+            self._frame_result.pack(fill="both", expand=True, padx=16, pady=(4, 0))
+
+    def _tick_spinner(self):
+        if self._state != "ANALYZING":
             return
-        if not dl.BIN_FFMPEG.is_file():
-            self._set_status("Configurando ffmpeg...", TEXT_FAINT)
-            threading.Thread(target=self._ffmpeg_setup_worker, daemon=True).start()
+        char = _SPINNER[self._spinner_idx % len(_SPINNER)]
+        self._spinner_lbl.configure(text=f"{char}  analisando link...")
+        self._spinner_idx += 1
+        self.after(120, self._tick_spinner)
 
-    def _ffmpeg_setup_worker(self):
-        ok = dl.setup_local_ffmpeg()
-        if ok:
-            dl.FFMPEG_PATH = str(dl.BIN_FFMPEG)
-            dl.FFMPEG_AVAILABLE = True
-            self.after(0, self._set_status, "Pronto para baixar", TEXT_FAINT)
-        else:
-            self.after(0, self._set_status, "ffmpeg não encontrado — MP3 indisponível", WARNING)
+    # ── Actions ───────────────────────────────────────────────────────────────
 
-    def _set_status(self, text: str, color: str = TEXT_FAINT):
-        self._status.configure(text=text, text_color=color)
-
-    def _paste_url(self):
+    def _paste_and_analyze(self):
         try:
-            self._url_entry.delete(0, "end")
-            self._url_entry.insert(0, self.clipboard_get())
+            url = self.clipboard_get().strip()
+            if re.match(r"https?://", url):
+                self._analyze(dl.normalize_url(url))
         except Exception:
             pass
 
-    def _on_format_change(self, value: str):
-        if value == "MP3":
-            self._quality_menu.configure(values=["320kbps", "192kbps", "128kbps", "64kbps"])
-            self._quality_var.set("192kbps")
-        else:
-            self._quality_menu.configure(values=["1080p", "720p", "480p", "360p", "240p"])
-            self._quality_var.set("720p")
+    def _use_suggestion(self):
+        if self._sugg_url:
+            self._analyze(self._sugg_url)
+
+    def _cancel(self):
+        self._cancel_event.set()
+        self._go("EMPTY")
+
+    def check_clipboard(self):
+        if self._state != "EMPTY":
+            return
+        try:
+            text = self.clipboard_get().strip()
+            if re.match(r"https?://", text) and text != self._sugg_url:
+                self._sugg_url = dl.normalize_url(text)
+                truncated = text if len(text) <= 62 else text[:59] + "..."
+                self._sugg_btn.configure(text=truncated)
+                self._sugg_frame.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 8))
+        except Exception:
+            pass
+
+    def _analyze(self, url: str):
+        self._current_url = url
+        short = url if len(url) <= 62 else url[:59] + "..."
+        self._url_display.configure(text=short)
+        self._cancel_event = threading.Event()
+        self._go("ANALYZING")
+
+        cancel = self._cancel_event
+
+        def worker():
+            try:
+                info = dl.extract_info(url)
+                if not cancel.is_set():
+                    self.after(0, self._on_info, info)
+            except Exception as exc:
+                if not cancel.is_set():
+                    self.after(0, self._on_analyze_error, str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_info(self, info: dict):
+        if self._state != "ANALYZING":
+            return
+        self._info = info
+
+        # Populate info card
+        title = info.get("title") or "Sem título"
+        platform = dl.get_platform(info)
+        uploader = info.get("uploader") or info.get("channel") or ""
+        duration = info.get("duration_string") or ""
+        meta = " · ".join(filter(None, [platform, uploader, duration]))
+
+        self._title_lbl.configure(text=title)
+        self._meta_lbl.configure(text=meta)
+
+        # Quality options
+        heights = dl.get_available_heights(info)
+        self._quality_menu.configure(values=heights)
+        self._quality_var.set(heights[0] if heights else "720p")
+
+        self._go("RESULT")
+        self._update_dl_btn()
+
+        # Thumbnail in background
+        thumb_url = info.get("thumbnail")
+        if thumb_url and _PIL:
+            threading.Thread(target=self._load_thumb, args=(thumb_url,), daemon=True).start()
+
+    def _load_thumb(self, url: str):
+        try:
+            with urllib.request.urlopen(url, timeout=8) as r:
+                data = r.read()
+            img = Image.open(io.BytesIO(data)).convert("RGB").resize((120, 68), Image.LANCZOS)
+            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(120, 68))
+            self.after(0, self._thumb_lbl.configure, {"image": ctk_img, "text": ""})
+        except Exception:
+            pass
+
+    def _on_analyze_error(self, msg: str):
+        if self._state != "ANALYZING":
+            return
+        self._go("RESULT")
+        self._info = {}
+        self._title_lbl.configure(text="Não foi possível analisar este link")
+        self._meta_lbl.configure(text="")
+        self._error_lbl.configure(text=msg)
+        self._error_lbl.pack(fill="x", padx=4, pady=(0, 6), before=self._dl_btn)
+        self._update_dl_btn()
+
+    def _update_dl_btn(self):
+        extras = sum([
+            self._subs_var.get(),
+            self._chaps_var.get(),
+            self._thumb_dl_var.get(),
+            self._meta_var.get(),
+        ])
+        n = 1 + extras
+        label = "item" if n == 1 else "itens"
+        self._dl_btn.configure(text=f"Baixar {n} {label}")
 
     def _choose_folder(self):
         folder = filedialog.askdirectory(initialdir=self._folder_entry.get())
@@ -222,68 +451,45 @@ class NovoView(ctk.CTkFrame):
             self._folder_entry.delete(0, "end")
             self._folder_entry.insert(0, folder)
 
-    def _validate(self):
-        url = self._url_entry.get().strip()
-        if not url:
-            messagebox.showerror("Vex", "Insira o link do vídeo.")
-            return None
-        if not re.match(r"https?://", url):
-            messagebox.showerror("Vex", "Link inválido. Insira uma URL válida (https://...).")
-            return None
-        url = dl.normalize_url(url)
-        if self._format_var.get() == "MP3" and not dl.FFMPEG_AVAILABLE:
-            messagebox.showerror("Vex", "ffmpeg não está disponível. Tente reiniciar o app.")
-            return None
+    def _start_download(self):
+        if not self._info and not self._current_url:
+            return
+
         output_dir = self._folder_entry.get().strip()
         if not os.path.isdir(output_dir):
+            from tkinter import messagebox
             messagebox.showerror("Vex", "Pasta de destino não encontrada.")
-            return None
-        return url, output_dir
-
-    def _start_download(self):
-        if self._is_downloading:
-            return
-        result = self._validate()
-        if result is None:
             return
 
-        url, output_dir = result
-        self._is_downloading = True
-        self._download_btn.configure(state="disabled", text="Baixando...")
-        self._progress.set(0)
-        self._set_status("Iniciando...")
+        is_audio = self._media_var.get() == 1
+        opts = DownloadOptions(
+            fmt="MP3" if is_audio else "MP4",
+            quality=self._bitrate_var.get() if is_audio else self._quality_var.get(),
+            subtitles=self._subs_var.get(),
+            chapters=self._chaps_var.get(),
+            thumbnail_dl=self._thumb_dl_var.get(),
+            metadata=self._meta_var.get(),
+        )
 
-        def on_progress(pct: float):
-            self.after(0, self._progress.set, pct)
-            self.after(0, self._set_status, f"Baixando... {pct * 100:.1f}%", TEXT_SOFT)
+        title = (self._info or {}).get("title") or self._current_url
+        platform = dl.get_platform(self._info or {}) if self._info else "web"
+        thumb_url = (self._info or {}).get("thumbnail")
 
-        def on_processing():
-            self.after(0, self._progress.set, 1.0)
-            self.after(0, self._set_status, "Processando arquivo...", TEXT_SOFT)
+        job = DownloadJob.new(
+            url=self._current_url,
+            title=title,
+            platform=platform,
+            thumbnail_url=thumb_url,
+            options=opts,
+            output_dir=output_dir,
+        )
 
-        def on_done():
-            self.after(0, self._finish, True, None)
+        if self._on_start_download:
+            self._on_start_download(job)
 
-        def on_error(msg: str):
-            self.after(0, self._finish, False, msg)
-
-        threading.Thread(
-            target=dl.download,
-            args=(url, output_dir, self._format_var.get(), self._quality_var.get(),
-                  on_progress, on_processing, on_done, on_error),
-            daemon=True,
-        ).start()
-
-    def _finish(self, success: bool, error: str | None):
-        self._is_downloading = False
-        self._download_btn.configure(state="normal", text="Baixar")
-        if success:
-            self._progress.set(1.0)
-            self._set_status("Download concluído!", SUCCESS)
-            messagebox.showinfo("Vex", "Download concluído com sucesso!")
-            self._progress.set(0)
-            self._set_status("Pronto para baixar")
-        else:
-            self._progress.set(0)
-            self._set_status("Erro no download", DANGER)
-            messagebox.showerror("Vex", f"Falha no download:\n\n{error}")
+        self._go("EMPTY")
+        self._info = None
+        self._current_url = ""
+        # Reset result view state
+        self._thumb_lbl.configure(image=None, text="")
+        self._error_lbl.pack_forget()

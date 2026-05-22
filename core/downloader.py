@@ -11,7 +11,6 @@ import yt_dlp
 def _project_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
-    # core/downloader.py -> core/ -> project root
     return Path(__file__).parent.parent
 
 
@@ -65,6 +64,40 @@ def normalize_url(url: str) -> str:
     return re.sub(r"^(https?://)(?:www\.)?x\.com/", r"\1twitter.com/", url)
 
 
+def extract_info(url: str) -> dict:
+    opts = {"quiet": True, "no_warnings": True, "ignoreerrors": False}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.extract_info(url, download=False) or {}
+
+
+def get_available_heights(info: dict) -> list[str]:
+    heights: set[int] = set()
+    for f in info.get("formats", []):
+        h = f.get("height")
+        if h and f.get("vcodec", "none") != "none":
+            heights.add(h)
+    if not heights:
+        return ["1080p", "720p", "480p", "360p"]
+    return [f"{h}p" for h in sorted(heights, reverse=True)]
+
+
+def get_subtitle_langs(info: dict) -> list[str]:
+    langs: set[str] = set()
+    langs.update(info.get("subtitles", {}).keys())
+    langs.update(info.get("automatic_captions", {}).keys())
+    priority = ["pt", "pt-BR", "pt-br", "en", "es"]
+    ordered = [l for l in priority if l in langs]
+    for l in sorted(langs):
+        if l not in ordered:
+            ordered.append(l)
+    return ordered[:30]
+
+
+def get_platform(info: dict) -> str:
+    domain = info.get("webpage_url_domain") or info.get("extractor_key", "")
+    return domain.replace("www.", "").replace(".com", "").strip() or "web"
+
+
 def _cleanup_intermediates(output_dir: str, files_before: set):
     new_files = set(os.listdir(output_dir)) - files_before
     for f in new_files:
@@ -81,6 +114,7 @@ def _build_opts(
     quality: str,
     on_progress: Callable[[float], None],
     on_processing: Callable[[], None],
+    extra: dict | None = None,
 ) -> dict:
     def hook(d: dict):
         if d["status"] == "downloading":
@@ -99,6 +133,9 @@ def _build_opts(
 
     if FFMPEG_PATH:
         base["ffmpeg_location"] = os.path.dirname(FFMPEG_PATH)
+
+    if extra:
+        base.update(extra)
 
     if fmt == "MP3":
         abr = quality.replace("kbps", "")
@@ -136,10 +173,11 @@ def download(
     on_processing: Callable[[], None],
     on_done: Callable[[], None],
     on_error: Callable[[str], None],
+    extra: dict | None = None,
 ):
     files_before = set(os.listdir(output_dir))
     try:
-        opts = _build_opts(output_dir, fmt, quality, on_progress, on_processing)
+        opts = _build_opts(output_dir, fmt, quality, on_progress, on_processing, extra)
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
         _cleanup_intermediates(output_dir, files_before)
