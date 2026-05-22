@@ -53,13 +53,27 @@ def download_and_install(
     on_done: Callable[[], None],
     on_error: Callable[[], None],
 ):
+    from urllib.parse import urlparse
+
     def _run():
+        parsed = urlparse(download_url)
+        if parsed.scheme != "https" or not parsed.netloc.endswith("github.com"):
+            on_error()
+            return
+        fd = None
+        tmp = None
         try:
-            tmp = tempfile.mktemp(suffix="_setup.exe")
+            fd, tmp = tempfile.mkstemp(suffix="_setup.exe")
+            import os
+            os.close(fd)
+            fd = None
             urllib.request.urlretrieve(download_url, tmp)
             subprocess.Popen([tmp, "/SILENT"])
             on_done()
         except Exception:
+            if fd is not None:
+                import os
+                os.close(fd)
             on_error()
 
     threading.Thread(target=_run, daemon=True).start()
