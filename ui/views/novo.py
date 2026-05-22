@@ -490,7 +490,7 @@ class NovoView(ctk.CTkFrame):
                 data = r.read()
             img = Image.open(io.BytesIO(data)).convert("RGB").resize((120, 68), Image.LANCZOS)
             ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(120, 68))
-            self.after(0, self._thumb_lbl.configure, {"image": ctk_img, "text": ""})
+            self.after(0, lambda i=ctk_img: self._thumb_lbl.configure(image=i, text=""))
         except Exception:
             pass
 

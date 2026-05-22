@@ -60,7 +60,7 @@ class QueueManager:
             langs = opts.subtitle_langs or ["pt-BR", "en"]
             fmt = opts.subtitle_fmt or "srt"
             embed = fmt in ("embutido", "ambos")
-            extra.update(writesubtitles=True, subtitleslangs=langs)
+            extra.update(writesubtitles=True, writeautomaticsub=True, subtitleslangs=langs)
             if fmt in ("srt", "ambos"):
                 extra["subtitlesformat"] = "srt"
             if embed:
