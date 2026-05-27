@@ -1,5 +1,6 @@
 import os
 import re
+import subprocess
 import sys
 import shutil
 from pathlib import Path
@@ -58,6 +59,39 @@ FFMPEG_AVAILABLE: bool = FFMPEG_PATH is not None
 
 _TEMP_EXT = (".webm", ".m4a", ".part", ".ytdl")
 _TEMP_FID = re.compile(r'\.\d+\.(mp4|webm|m4a|mkv|opus|ogg)$')
+
+
+def _is_hevc(filepath: str, ffmpeg: str) -> bool:
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-i", filepath],
+            capture_output=True, text=True, timeout=15,
+        )
+        info = (r.stdout + r.stderr).lower()
+        return "hevc" in info or "bytevc" in info or "hvc1" in info
+    except Exception:
+        return False
+
+
+def _recode_to_h264(filepath: str, ffmpeg: str) -> None:
+    """Re-encodes H.265 file to H.264 in-place. Raises on failure."""
+    p = Path(filepath)
+    tmp = str(p.with_stem(p.stem + "_h264tmp"))
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", filepath,
+             "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+             "-c:a", "aac", "-movflags", "+faststart",
+             tmp],
+            check=True, capture_output=True, timeout=600,
+        )
+        os.replace(tmp, filepath)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def normalize_url(url: str) -> str:
@@ -152,7 +186,10 @@ def _build_opts(
     height = quality.replace("p", "")
     if FFMPEG_AVAILABLE:
         fmt_str = (
-            f"bestvideo[height<={height}][ext=mp4]"
+            # Prefer H.264 (avc) — avoids H.265/HEVC which breaks most messaging apps
+            f"bestvideo[height<={height}][ext=mp4][vcodec^=avc]"
+            f"+bestaudio[ext=m4a]"
+            f"/bestvideo[height<={height}][ext=mp4]"
             f"+bestaudio[ext=m4a]"
             f"/best[height<={height}][ext=mp4]"
             f"/best[height<={height}]"
@@ -181,6 +218,17 @@ def download(
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
         _cleanup_intermediates(output_dir, files_before)
+
+        if FFMPEG_PATH and fmt == "MP4":
+            new_files = set(os.listdir(output_dir)) - files_before
+            for fname in new_files:
+                fp = os.path.join(output_dir, fname)
+                if fname.lower().endswith(".mp4") and _is_hevc(fp, FFMPEG_PATH):
+                    try:
+                        _recode_to_h264(fp, FFMPEG_PATH)
+                    except Exception:
+                        pass  # keep original if recode fails
+
         on_done()
     except PermissionError:
         # Windows may lock intermediate files after ffmpeg merge — final output was created.

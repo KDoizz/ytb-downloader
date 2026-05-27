@@ -1,4 +1,6 @@
+import sys
 import threading
+from pathlib import Path
 
 import customtkinter as ctk
 
@@ -25,6 +27,8 @@ class VexApp(ctk.CTk):
         self.minsize(600, 520)
         self.configure(fg_color=BG)
 
+        self._set_icon()
+
         self._download_url: str | None = None
         self._state = AppState()
         self._queue = QueueManager(self._state)
@@ -48,6 +52,19 @@ class VexApp(ctk.CTk):
         updater.check_update_async(
             on_new_version=lambda v, url: self.after(0, self._show_update_banner, v, url),
         )
+
+    # ── Icon ──────────────────────────────────────────────────────────────────
+
+    def _set_icon(self):
+        try:
+            from PIL import Image, ImageTk
+            base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent.parent  # type: ignore[attr-defined]
+            img = Image.open(base / "assets" / "logo-192.png")
+            photo = ImageTk.PhotoImage(img.resize((64, 64), Image.LANCZOS))
+            self.wm_iconphoto(True, photo)
+            self._icon_ref = photo  # prevent GC
+        except Exception:
+            pass
 
     # ── Header ────────────────────────────────────────────────────────────────
 

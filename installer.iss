@@ -12,6 +12,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 OutputBaseFilename=Vex Setup
 OutputDir=Output
+SetupIconFile=assets\favicon.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern

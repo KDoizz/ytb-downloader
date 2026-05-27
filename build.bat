@@ -12,7 +12,7 @@ if errorlevel 1 (
 )
 
 echo Instalando dependencias de build...
-pip install pyinstaller imageio-ffmpeg customtkinter yt-dlp >nul 2>&1
+pip install pyinstaller imageio-ffmpeg customtkinter yt-dlp pillow >nul 2>&1
 
 echo.
 echo Garantindo ffmpeg em bin\...
@@ -36,6 +36,8 @@ python -m PyInstaller ^
   --name "Vex" ^
   --add-data "%CTK_PATH%;customtkinter" ^
   --add-data "bin\ffmpeg.exe;bin" ^
+  --add-data "assets;assets" ^
+  --icon "assets\favicon.ico" ^
   --collect-data yt_dlp ^
   app.py
 

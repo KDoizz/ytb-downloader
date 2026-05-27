@@ -22,7 +22,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install pyinstaller imageio-ffmpeg customtkinter yt-dlp
+        run: pip install pyinstaller imageio-ffmpeg customtkinter yt-dlp pillow
 
       - name: Copy ffmpeg
         run: |
@@ -38,6 +38,8 @@ jobs:
             --name "Vex" `
             "--add-data=$ctk;customtkinter" `
             "--add-data=bin\ffmpeg.exe;bin" `
+            "--add-data=assets;assets" `
+            "--icon=assets\favicon.ico" `
             --collect-data yt_dlp `
             app.py
 
