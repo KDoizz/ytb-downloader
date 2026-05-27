@@ -37,7 +37,7 @@ python -m PyInstaller ^
   --add-data "%CTK_PATH%;customtkinter" ^
   --add-data "bin\ffmpeg.exe;bin" ^
   --add-data "assets;assets" ^
-  --icon "assets\favicon.ico" ^
+  --icon "assets\app.ico" ^
   --collect-data yt_dlp ^
   app.py
 
