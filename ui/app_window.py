@@ -57,12 +57,11 @@ class VexApp(ctk.CTk):
 
     def _set_icon(self):
         try:
-            from PIL import Image, ImageTk
             base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent.parent  # type: ignore[attr-defined]
-            img = Image.open(base / "assets" / "logo-192.png")
-            photo = ImageTk.PhotoImage(img.resize((64, 64), Image.LANCZOS))
-            self.wm_iconphoto(True, photo)
-            self._icon_ref = photo  # prevent GC
+            ico = base / "assets" / "app.ico"
+            if ico.exists():
+                # after() ensures the window handle exists before setting the icon
+                self.after(100, lambda: self.iconbitmap(str(ico)))
         except Exception:
             pass
 
