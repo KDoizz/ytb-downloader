@@ -61,26 +61,54 @@ _TEMP_EXT = (".webm", ".m4a", ".part", ".ytdl")
 _TEMP_FID = re.compile(r'\.\d+\.(mp4|webm|m4a|mkv|opus|ogg)$')
 
 
-def _is_hevc(filepath: str, ffmpeg: str) -> bool:
+def _needs_recode(filepath: str, ffmpeg: str) -> bool:
+    """Returns True unless the video is confirmed H.264 8-bit yuv420p SDR (Twitter/platform compatible)."""
     try:
         r = subprocess.run(
             [ffmpeg, "-i", filepath],
             capture_output=True, text=True, timeout=15,
         )
         info = (r.stdout + r.stderr).lower()
-        return "hevc" in info or "bytevc" in info or "hvc1" in info
+        # Must be H.264, not any HEVC variant
+        is_h264 = "h264" in info and not any(x in info for x in ("hevc", "h265", "bytevc", "hvc1"))
+        # Must be plain 8-bit yuv420p — yuv420p10le, yuv422p, yuv444p all fail Twitter
+        is_8bit_420 = bool(re.search(r"yuv420p(?!\d)", info))
+        # Must be SDR — HDR (bt2020/PQ/HLG) fails Twitter even in H.264
+        is_sdr = not any(x in info for x in ("bt2020", "smpte2084", "arib-std-b67", "bt.2020", "hlg"))
+        return not (is_h264 and is_8bit_420 and is_sdr)
     except Exception:
         return False
 
 
+def _remux_faststart(filepath: str, ffmpeg: str) -> None:
+    """Stream-copy into a faststart MP4 (moov at start). No re-encode — very fast."""
+    p = Path(filepath)
+    tmp = str(p.with_stem(p.stem + "_fstmp"))
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", filepath, "-c", "copy", "-movflags", "+faststart", tmp],
+            check=True, capture_output=True, timeout=120,
+        )
+        os.replace(tmp, filepath)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
 def _recode_to_h264(filepath: str, ffmpeg: str) -> None:
-    """Re-encodes H.265 file to H.264 in-place. Raises on failure."""
+    """Re-encodes to H.264 8-bit SDR in-place. Raises on failure."""
     p = Path(filepath)
     tmp = str(p.with_stem(p.stem + "_h264tmp"))
     try:
         subprocess.run(
             [ffmpeg, "-y", "-i", filepath,
              "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+             "-pix_fmt", "yuv420p",         # force 8-bit
+             "-colorspace", "bt709",         # force SDR color space metadata
+             "-color_primaries", "bt709",
+             "-color_trc", "bt709",
              "-c:a", "aac", "-movflags", "+faststart",
              tmp],
             check=True, capture_output=True, timeout=600,
@@ -223,11 +251,20 @@ def download(
             new_files = set(os.listdir(output_dir)) - files_before
             for fname in new_files:
                 fp = os.path.join(output_dir, fname)
-                if fname.lower().endswith(".mp4") and _is_hevc(fp, FFMPEG_PATH):
+                if not fname.lower().endswith(".mp4"):
+                    continue
+                if _needs_recode(fp, FFMPEG_PATH):
                     try:
                         _recode_to_h264(fp, FFMPEG_PATH)
                     except Exception:
                         pass  # keep original if recode fails
+                else:
+                    # Always remux for faststart even when codecs are fine —
+                    # ensures moov atom is at the start (required by Twitter uploader)
+                    try:
+                        _remux_faststart(fp, FFMPEG_PATH)
+                    except Exception:
+                        pass
 
         on_done()
     except PermissionError:

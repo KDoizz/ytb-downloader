@@ -517,8 +517,16 @@ class NovoView(ctk.CTkFrame):
             with urllib.request.urlopen(url, timeout=8) as r:
                 data = r.read()
             img = Image.open(io.BytesIO(data)).convert("RGB").resize((120, 68), Image.LANCZOS)
-            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(120, 68))
-            self.after(0, lambda i=ctk_img: self._thumb_lbl.configure(image=i, text=""))
+
+            def _apply(image=img):
+                try:
+                    ctk_img = ctk.CTkImage(light_image=image, dark_image=image, size=(120, 68))
+                    self._thumb_img = ctk_img  # prevent GC
+                    self._thumb_lbl.configure(image=ctk_img, text="")
+                except Exception:
+                    pass
+
+            self.after(0, _apply)
         except Exception:
             pass
 
